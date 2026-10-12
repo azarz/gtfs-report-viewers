@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visualiseur du rapport de traitement GTFS</title>
+<style>
+  :root {
+    --bg: #f4f6fa; --card: #fff; --text: #1d2433; --muted: #6b7489; --border: #e1e5ee;
+    --accent: #2f6fed; --ok: #1f9d55; --warn: #e3a008; --bad: #d64545;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 16px 24px; background: #1d2433; color: #fff; }
+  header h1 { font-size: 18px; margin: 0; flex: 1; }
+  header .meta { color: #b9c2d6; font-size: 13px; }
+  .file-btn { background: var(--accent); color: #fff; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+  .file-btn input { display: none; }
+  main { padding: 20px 24px; max-width: 1500px; margin: 0 auto; }
+  #drop { margin: 40px auto; max-width: 640px; padding: 60px 20px; border: 2px dashed #aab4c8; border-radius: 12px; text-align: center; color: var(--muted); background: var(--card); }
+  #drop.over { border-color: var(--accent); color: var(--accent); }
+  #error { color: var(--bad); text-align: center; font-weight: 600; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .kpi { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .kpi .v { font-size: 26px; font-weight: 700; }
+  .kpi .l { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .kpi .s { color: var(--muted); font-size: 12px; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(460px, 1fr)); gap: 16px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .card h2 { font-size: 15px; margin: 0 0 12px; display: flex; align-items: center; gap: 10px; }
+  .card h2 small { color: var(--muted); font-weight: 400; }
+  .card h2 select { margin-left: auto; font: inherit; font-size: 13px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; }
+  .bar-row { display: grid; grid-template-columns: 240px 1fr 100px; align-items: center; gap: 10px; padding: 3px 4px; border-radius: 6px; }
+  .bar-row.clickable { cursor: pointer; }
+  .bar-row.clickable:hover, .bar-row.active { background: #eef3ff; }
+  .bar-row .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  .bar-track { background: #edf0f6; border-radius: 4px; height: 18px; overflow: hidden; }
+  .bar { height: 100%; border-radius: 4px; transition: width .4s; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .entity { margin-bottom: 12px; }
+  .entity .head { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 3px; }
+  .entity .head b { display: inline-block; }
+  .entity .head b::first-letter { text-transform: uppercase; }
+  .entity .head .removed { color: var(--bad); font-weight: 600; }
+  .dual { position: relative; height: 22px; background: #edf0f6; border-radius: 4px; overflow: hidden; }
+  .dual .in { position: absolute; inset: 0 auto 0 0; background: #c9d3e8; }
+  .dual .out { position: absolute; inset: 4px auto 4px 0; background: var(--accent); border-radius: 0 3px 3px 0; }
+  .entity .sub { font-size: 12px; color: var(--muted); }
+  .hist { display: flex; align-items: flex-end; gap: 4px; height: 200px; padding-top: 18px; }
+  .hist .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; cursor: pointer; border-radius: 4px; }
+  .hist .col:hover, .hist .col.active { background: #eef3ff; }
+  .hist .col .b { width: 80%; border-radius: 4px 4px 0 0; min-height: 1px; transition: height .4s; }
+  .hist .col .c { font-size: 11px; font-weight: 600; }
+  .hist-labels { display: flex; gap: 4px; font-size: 11px; color: var(--muted); }
+  .hist-labels span { flex: 1; text-align: center; }
+  .soon { width: 100%; font-size: 13px; margin-top: 12px; }
+  .soon td { padding: 4px 6px; border-bottom: 1px solid var(--border); }
+  .warnings li { margin: 4px 0; }
+  .warnings li.ok { color: var(--ok); }
+  .warnings li.warn { color: #9a6700; }
+  .warnings details { color: var(--muted); font-size: 12px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px; }
+  .toolbar input, .toolbar select { padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; font: inherit; }
+  .toolbar input[type=search] { min-width: 280px; }
+  .toolbar .count { color: var(--muted); margin-left: auto; }
+  .tag { background: #eef3ff; color: var(--accent); border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
+  .table-wrap { max-height: 620px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+  table.data { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.data th, table.data td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
+  table.data th { position: sticky; top: 0; z-index: 1; background: #f8f9fc; cursor: pointer; user-select: none; white-space: nowrap; }
+  table.data th.sorted::after { content: attr(data-dir); margin-left: 4px; color: var(--accent); }
+  table.data td.name { word-break: break-all; min-width: 260px; }
+  table.data td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  table.data tr.elim td { background: #fdf1f1; }
+  .io { color: var(--muted); }
+  .io b { color: var(--text); font-weight: 600; }
+  .pbar { display: flex; align-items: center; gap: 6px; min-width: 110px; }
+  .pbar .t { flex: 1; height: 8px; background: #edf0f6; border-radius: 4px; overflow: hidden; }
+  .pbar .f { height: 100%; }
+  .pbar span { width: 44px; text-align: right; font-variant-numeric: tabular-nums; }
+  .chip { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; color: #fff; white-space: nowrap; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); margin-top: 10px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <a href="index.html" style="color:#b9c2d6;text-decoration:none" title="Accueil">← Accueil</a>
+  <h1>Rapport de traitement GTFS <span style="font-weight:400;color:#b9c2d6">(gtfs_clean)</span></h1>
+  <span class="meta" id="meta"></span>
+  <label class="file-btn">Charger un JSON<input type="file" id="file" accept=".json,application/json"></label>
+</header>
+
+<div id="drop">Déposez un fichier <b>processing_report.json</b> ici, ou utilisez « Charger un JSON ».<p id="error"></p></div>
+
+<main id="app" hidden>
+  <section class="kpis" id="kpis"></section>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>Volume conservé après nettoyage <small>(somme sur les réseaux conservés)</small></h2>
+      <div id="volumes"></div>
+      <div class="legend"><span><i style="background:#c9d3e8"></i>entrée</span><span><i style="background:var(--accent)"></i>sortie</span></div>
+    </section>
+    <section class="card">
+      <h2>Éliminations par motif <small>(cliquer pour filtrer)</small></h2>
+      <div id="reasons"></div>
+      <div class="legend" id="stage-legend"></div>
+    </section>
+  </div>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>Répartition du taux d'élimination <small>(réseaux conservés, cliquer sur une barre pour filtrer)</small>
+        <select id="histMetric"></select>
+      </h2>
+      <div class="hist" id="hist"></div>
+      <div class="hist-labels" id="histLabels"></div>
+    </section>
+    <section class="card">
+      <h2>Dates d'expiration des graphes <small>(réseaux conservés, par mois)</small></h2>
+      <div class="hist" id="expHist" style="height:150px"></div>
+      <div class="hist-labels" id="expLabels"></div>
+      <table class="soon" id="soon"></table>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Contrôles de cohérence</h2>
+    <ul class="warnings" id="warnings"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Métriques par réseau</h2>
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="Rechercher un réseau…">
+      <select id="statusFilter">
+        <option value="">Tous les statuts</option>
+        <option value="kept">Conservé</option>
+        <option value="eliminated">Éliminé</option>
+      </select>
+      <select id="reasonFilter"></select>
+      <span id="binTag"></span>
+      <span class="count" id="count"></span>
+    </div>
+    <div class="table-wrap">
+      <table class="data" id="metricsTable">
+        <thead><tr>
+          <th data-key="network_name">Réseau</th>
+          <th data-key="eliminated">Statut</th>
+          <th data-key="in_stops" title="entrée → sortie">Arrêts</th>
+          <th data-key="in_trips" title="entrée → sortie">Courses</th>
+          <th data-key="in_stop_times" title="entrée → sortie">Horaires de passage</th>
+          <th data-key="in_services" title="entrée → sortie">Services</th>
+          <th data-key="in_shapes" title="entrée → sortie">Tracés</th>
+          <th data-key="stops_eliminated_pct">% arrêts élim.</th>
+          <th data-key="trips_eliminated_pct">% courses élim.</th>
+          <th data-key="stop_times_eliminated_pct">% horaires élim.</th>
+          <th data-key="shapes_eliminated_pct">% tracés élim.</th>
+          <th data-key="graph_expiration_date">Expiration</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Tous les réseaux éliminés</h2>
+    <div class="toolbar">
+      <input id="elimSearch" type="search" placeholder="Rechercher un réseau…">
+      <select id="stageFilter"></select>
+      <select id="elimReasonFilter"></select>
+      <span class="count" id="elimCount"></span>
+    </div>
+    <div class="table-wrap" style="max-height:420px">
+      <table class="data" id="elimTable">
+        <thead><tr>
+          <th data-key="network_name">Réseau</th>
+          <th data-key="reason">Motif</th>
+          <th data-key="stage">Étape</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const ENTITIES = ['stops', 'trips', 'stop_times', 'services', 'shapes'];
+  const STAGE_COLORS = { get_all_gtfs: '#6b8afd', gtfs_clean: '#d64545' };
+  const stageColor = s => STAGE_COLORS[s] || '#3aa4a0';
+  const fmt = n => (n ?? 0).toLocaleString('fr-FR');
+  const fmtPct = v => v.toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' %';
+  const pct = (a, b) => b ? fmtPct(100 * a / b) : '–';
+  const ENTITY_LABELS = { stops: 'arrêts', trips: 'courses', stop_times: 'horaires de passage', services: 'services', shapes: 'tracés' };
+  const entityLabel = e => ENTITY_LABELS[e.replace(/_eliminated_pct$/, '')] || e;
+  const REASONS = {
+    dataset_offer_covered_by_region_aggregate: "Offre couverte par l'agrégat régional",
+    resource_expired_end_date: 'Ressource expirée (date de fin dépassée)',
+    community_resource_publisher_not_supported: 'Ressource communautaire : éditeur non supporté',
+    dataset_sub_type_school_only: 'Jeu de données uniquement scolaire',
+    metadata_issue_no_calendar: 'Métadonnées : pas de calendrier',
+    metadata_issue_invalid_shape_id: 'Métadonnées : shape_id invalide',
+    metadata_issue_invalid_coordinates: 'Métadonnées : coordonnées invalides',
+    metadata_issue_missing_mandatory_file: 'Métadonnées : fichier obligatoire manquant',
+    invalid_zip_file: 'Fichier ZIP invalide',
+    no_active_services_in_calendar: 'Aucun service actif dans le calendrier',
+    unsupported_gtfs_flex_locations_geojson: 'GTFS-Flex non supporté (locations.geojson)',
+    no_stops_after_filtering: 'Aucun arrêt après filtrage',
+  };
+  const humanize = s => {
+    if (!s) return '';
+    if (REASONS[s]) return REASONS[s];
+    const http = s.match(/^http_status_(\d+)$/);
+    if (http) return `Statut HTTP ${http[1]}`;
+    if (s.startsWith('processing_error')) return 'Erreur de traitement' + s.slice('processing_error'.length);
+    return s.replace(/_/g, ' ');
+  };
+  const $ = id => document.getElementById(id);
+  const DAY = 86400000;
+  const today = new Date(new Date().toISOString().slice(0, 10));
+  const daysUntil = d => d ? Math.round((new Date(d) - today) / DAY) : null;
+  const frDate = d => d ? new Date(d + 'T00:00:00').toLocaleDateString('fr-FR') : '–';
+  const frMonth = m => new Date(m + '-01T00:00:00').toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' });
+  const pctColor = p => p >= 75 ? '#d64545' : p >= 40 ? '#e3a008' : p > 0 ? '#6b8afd' : '#1f9d55';
+
+  let data, rows = [], elimRows = [];
+  let sort = { key: 'network_name', dir: 1 }, elimSort = { key: 'network_name', dir: 1 };
+  let activeReason = '', activeBin = null;
+
+  function el(tag, attrs = {}, ...children) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === 'style') e.style.cssText = v;
+      else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+      else e.setAttribute(k, v);
+    }
+    for (const c of children) e.append(c instanceof Node ? c : document.createTextNode(c ?? ''));
+    return e;
+  }
+
+  // Accept proper JSON, a JSON string containing JSON, or a JSON string wrapping a Python dict repr.
+  function parseReport(text) {
+    let v;
+    try { v = JSON.parse(text); } catch {
+      const t = text.trim().replace(/,\s*$/, '');
+      v = JSON.parse(t.startsWith('"') ? t : '"' + t);
+    }
+    if (typeof v === 'string') {
+      try { v = JSON.parse(v); } catch { v = JSON.parse(pyReprToJson(v)); }
+    }
+    return v;
+  }
+
+  function pyReprToJson(s) {
+    let out = '', i = 0;
+    while (i < s.length) {
+      const c = s[i];
+      if (c === "'" || c === '"') {
+        let j = i + 1, str = '';
+        while (j < s.length && s[j] !== c) {
+          if (s[j] === '\\') {
+            const n = s[j + 1];
+            if (n === 'x') { str += '\\u00' + s.substr(j + 2, 2); j += 4; }
+            else { str += n === "'" ? "'" : '\\' + n; j += 2; }
+          } else { str += s[j] === '"' ? '\\"' : s[j]; j++; }
+        }
+        out += '"' + str + '"';
+        i = j + 1;
+      } else if (s.startsWith('None', i)) { out += 'null'; i += 4; }
+      else if (s.startsWith('True', i)) { out += 'true'; i += 4; }
+      else if (s.startsWith('False', i)) { out += 'false'; i += 5; }
+      else { out += c; i++; }
+    }
+    return out;
+  }
+
+  function load(text) {
+    try {
+      data = parseReport(text);
+      if (!Array.isArray(data.network_metrics))
+        throw new Error('ce fichier ne ressemble pas à un rapport de traitement (network_metrics manquant).');
+      data.eliminated_networks = data.eliminated_networks || [];
+      $('error').textContent = '';
+      prepare();
+      render();
+    } catch (e) {
+      $('app').hidden = true; $('drop').hidden = false;
+      $('error').textContent = 'Impossible de charger le rapport : ' + e.message;
+    }
+  }
+
+  function prepare() {
+    rows = data.network_metrics.map(m => {
+      const r = { ...m, ...(m.metrics || {}) };
+      for (const k of ENTITIES) {
+        r['in_' + k] = m.input_counts?.[k] ?? 0;
+        r['out_' + k] = m.output_counts?.[k] ?? 0;
+      }
+      return r;
+    });
+    elimRows = data.eliminated_networks.map(e => ({ ...e }));
+  }
+
+  function render() {
+    $('drop').hidden = true; $('app').hidden = false;
+    $('meta').textContent = `Généré le ${data.generated_at ? new Date(data.generated_at).toLocaleString('fr-FR') : '?'}`;
+    const kept = rows.filter(r => !r.eliminated);
+    const elimClean = rows.length - kept.length;
+    const upstream = data.eliminated_networks.filter(e => e.stage !== 'gtfs_clean').length;
+    const sum = (list, key) => list.reduce((a, r) => a + (r[key] || 0), 0);
+
+    // KPIs
+    const k = $('kpis'); k.replaceChildren();
+    const kpi = (l, v, s, color) => k.append(el('div', { class: 'kpi' },
+      el('div', { class: 'l' }, l), el('div', { class: 'v', style: color ? `color:${color}` : '' }, v), el('div', { class: 's' }, s || '')));
+    kpi('Réseaux traités', fmt(rows.length), 'dans gtfs_clean');
+    kpi('Réseaux conservés', fmt(kept.length), pct(kept.length, rows.length) + ' des réseaux traités', 'var(--ok)');
+    kpi('Éliminés au nettoyage', fmt(elimClean), pct(elimClean, rows.length) + ' des réseaux traités', elimClean ? 'var(--bad)' : '');
+    kpi('Éliminés en amont', fmt(upstream), 'pendant get_all_gtfs', 'var(--warn)');
+    const gd = daysUntil(data.graph_expiration_date);
+    kpi('Expiration du graphe', frDate(data.graph_expiration_date), gd === null ? '' : gd < 0 ? `expiré depuis ${-gd} jour(s)` : `dans ${gd} jour(s)`,
+      gd !== null && gd <= 7 ? 'var(--bad)' : gd !== null && gd <= 30 ? 'var(--warn)' : '');
+    kpi('Horaires de passage conservés', pct(sum(rows, 'out_stop_times'), sum(rows, 'in_stop_times')), `${fmt(sum(rows, 'out_stop_times'))} / ${fmt(sum(rows, 'in_stop_times'))}`);
+
+    // Volumes
+    $('volumes').replaceChildren(...ENTITIES.map(ent => {
+      const i = sum(kept, 'in_' + ent), o = sum(kept, 'out_' + ent);
+      return el('div', { class: 'entity' },
+        el('div', { class: 'head' }, el('b', {}, entityLabel(ent)), el('span', { class: 'removed' }, `−${pct(i - o, i)} supprimés`)),
+        el('div', { class: 'dual' }, el('div', { class: 'in', style: 'width:100%' }), el('div', { class: 'out', style: `width:${i ? 100 * o / i : 0}%` })),
+        el('div', { class: 'sub' }, `${fmt(i)} → ${fmt(o)}`));
+    }));
+
+    renderReasons();
+
+    // Histogram metric selector
+    $('histMetric').replaceChildren(...ENTITIES.map(e => el('option', { value: e + '_eliminated_pct' }, entityLabel(e))));
+    $('histMetric').value = 'stops_eliminated_pct';
+    renderHist();
+    renderExpiration(kept);
+    renderChecks(kept);
+
+    // Filters
+    const reasons = [...new Set(rows.map(r => r.elimination_reason).filter(Boolean))].sort();
+    $('reasonFilter').replaceChildren(el('option', { value: '' }, 'Tous les motifs'), ...reasons.map(r => el('option', { value: r }, humanize(r))));
+    const allReasons = [...new Set(elimRows.map(e => e.reason))].sort();
+    $('elimReasonFilter').replaceChildren(el('option', { value: '' }, 'Tous les motifs'), ...allReasons.map(r => el('option', { value: r }, humanize(r))));
+    const stages = [...new Set(elimRows.map(e => e.stage))].sort();
+    $('stageFilter').replaceChildren(el('option', { value: '' }, 'Toutes les étapes'), ...stages.map(s => el('option', { value: s }, s)));
+    activeReason = ''; activeBin = null;
+    renderTable(); renderElimTable();
+  }
+
+  function renderReasons() {
+    const counts = {};
+    elimRows.forEach(e => {
+      const key = e.stage + '|' + e.reason;
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    const max = entries.length ? entries[0][1] : 0;
+    const total = elimRows.length;
+    $('reasons').replaceChildren(...entries.map(([key, c]) => {
+      const [stage, reason] = key.split('|');
+      const row = el('div', { class: 'bar-row clickable' + (reason === activeReason ? ' active' : ''), title: `${reason} (${stage})` },
+        el('span', { class: 'lbl' }, humanize(reason)),
+        el('div', { class: 'bar-track' }, el('div', { class: 'bar', style: `width:${100 * c / max}%;background:${stageColor(stage)}` })),
+        el('span', { class: 'num' }, `${c} · ${pct(c, total)}`));
+      row.addEventListener('click', () => {
+        activeReason = activeReason === reason ? '' : reason;
+        $('elimReasonFilter').value = activeReason;
+        $('reasonFilter').value = [...$('reasonFilter').options].some(o => o.value === activeReason) ? activeReason : '';
+        renderReasons(); renderTable(); renderElimTable();
+      });
+      return row;
+    }));
+    const stages = [...new Set(elimRows.map(e => e.stage))];
+    $('stage-legend').replaceChildren(...stages.map(s => el('span', {}, el('i', { style: `background:${stageColor(s)}` }), `étape : ${s}`)));
+  }
+
+  const BINS = [[0, 0, '0'], ...Array.from({ length: 10 }, (_, i) => [i * 10, (i + 1) * 10, `${i * 10}–${(i + 1) * 10}`])];
+  const inBin = (v, [lo, hi]) => hi === 0 ? v === 0 : v > lo && v <= hi;
+
+  function renderHist() {
+    const metric = $('histMetric').value;
+    const kept = rows.filter(r => !r.eliminated);
+    const counts = BINS.map(b => kept.filter(r => inBin(r[metric] ?? 0, b)).length);
+    const max = Math.max(1, ...counts);
+    $('hist').replaceChildren(...BINS.map((b, i) => {
+      const active = activeBin && activeBin.metric === metric && activeBin.idx === i;
+      const col = el('div', { class: 'col' + (active ? ' active' : ''), title: `${counts[i]} réseau(x) avec ${b[2]} % de ${entityLabel(metric)} éliminés` },
+        el('span', { class: 'c' }, String(counts[i])),
+        el('div', { class: 'b', style: `height:${100 * counts[i] / max}%;background:${pctColor(b[1])}` }));
+      col.addEventListener('click', () => {
+        activeBin = active ? null : { metric, idx: i };
+        renderHist(); renderTable();
+      });
+      return col;
+    }));
+    $('histLabels').replaceChildren(...BINS.map(b => el('span', {}, b[2])));
+  }
+
+  function renderExpiration(kept) {
+    const byMonth = {};
+    kept.forEach(r => { if (r.graph_expiration_date) { const m = r.graph_expiration_date.slice(0, 7); byMonth[m] = (byMonth[m] || 0) + 1; } });
+    const months = Object.keys(byMonth).sort();
+    const max = Math.max(1, ...Object.values(byMonth));
+    $('expHist').replaceChildren(...months.map(m => {
+      const d = daysUntil(m + '-28');
+      return el('div', { class: 'col', title: `${byMonth[m]} réseau(x) expirant en ${frMonth(m)}` },
+        el('span', { class: 'c' }, String(byMonth[m])),
+        el('div', { class: 'b', style: `height:${100 * byMonth[m] / max}%;background:${d < 30 ? '#d64545' : d < 90 ? '#e3a008' : '#1f9d55'}` }));
+    }));
+    $('expLabels').replaceChildren(...months.map(m => el('span', { style: 'writing-mode:vertical-rl;transform:rotate(180deg);height:60px' }, frMonth(m))));
+
+    const soonest = kept.filter(r => r.graph_expiration_date).sort((a, b) => a.graph_expiration_date.localeCompare(b.graph_expiration_date)).slice(0, 8);
+    $('soon').replaceChildren(
+      el('tr', {}, el('td', { colspan: 3, style: 'font-weight:600;color:var(--muted)' }, "Expirations les plus proches (elles déterminent l'expiration globale du graphe)")),
+      ...soonest.map(r => {
+        const d = daysUntil(r.graph_expiration_date);
+        return el('tr', {},
+          el('td', { style: 'word-break:break-all' }, r.network_name),
+          el('td', { style: 'white-space:nowrap' }, frDate(r.graph_expiration_date)),
+          el('td', { class: 'num', style: `color:${d < 0 ? 'var(--bad)' : d <= 30 ? '#9a6700' : 'var(--ok)'}` }, d < 0 ? `il y a ${-d} j` : `${d} j`));
+      }));
+  }
+
+  function renderChecks(kept) {
+    const w = [];
+    const add = (msg, items) => w.push({ msg, items });
+    const dupCheck = (list, label) => {
+      const c = {};
+      list.forEach(x => c[x.network_name] = (c[x.network_name] || 0) + 1);
+      const d = Object.entries(c).filter(([, n]) => n > 1);
+      if (d.length) add(`${d.length} nom(s) de réseau en double dans ${label}`, d.map(([n, k]) => `${n} (×${k})`));
+    };
+    dupCheck(data.network_metrics, 'network_metrics');
+    dupCheck(data.eliminated_networks, 'eliminated_networks');
+
+    const minExp = kept.map(r => r.graph_expiration_date).filter(Boolean).sort()[0];
+    if (data.graph_expiration_date && minExp && data.graph_expiration_date !== minExp)
+      add(`La date d'expiration globale (${frDate(data.graph_expiration_date)}) diffère de l'expiration la plus proche parmi les réseaux conservés (${frDate(minExp)})`);
+    const gen = (data.generated_at || '').slice(0, 10);
+    const expired = kept.filter(r => r.graph_expiration_date && gen && r.graph_expiration_date < gen);
+    if (expired.length) add(`${expired.length} réseau(x) conservé(s) déjà expiré(s) à la date de génération`, expired.map(r => `${r.network_name} (${frDate(r.graph_expiration_date)})`));
+    const noExp = kept.filter(r => !r.graph_expiration_date);
+    if (noExp.length) add(`${noExp.length} réseau(x) conservé(s) sans graph_expiration_date`, noExp.map(r => r.network_name));
+    const empty = kept.filter(r => !r.out_stops || !r.out_trips || !r.out_stop_times);
+    if (empty.length) add(`${empty.length} réseau(x) conservé(s) sans arrêt / course / horaire en sortie`, empty.map(r => r.network_name));
+    const grown = rows.filter(r => ENTITIES.some(e => r['out_' + e] > r['in_' + e]));
+    if (grown.length) add(`${grown.length} réseau(x) avec des volumes en sortie supérieurs à l'entrée`, grown.map(r => r.network_name));
+    const noReason = rows.filter(r => r.eliminated && !r.elimination_reason);
+    if (noReason.length) add(`${noReason.length} réseau(x) éliminé(s) sans elimination_reason`, noReason.map(r => r.network_name));
+    const elimNames = new Set(data.eliminated_networks.filter(e => e.stage === 'gtfs_clean').map(e => e.network_name));
+    const missing = rows.filter(r => r.eliminated && !elimNames.has(r.network_name));
+    if (missing.length) add(`${missing.length} réseau(x) éliminé(s) dans network_metrics mais absent(s) de eliminated_networks`, missing.map(r => r.network_name));
+    const heavy = kept.filter(r => (r.stop_times_eliminated_pct ?? 0) >= 50);
+    if (heavy.length) add(`${heavy.length} réseau(x) conservé(s) ayant perdu ≥ 50 % de leurs horaires de passage`, heavy.map(r => `${r.network_name} (${fmtPct(r.stop_times_eliminated_pct)})`));
+
+    $('warnings').replaceChildren(...(w.length ? w.map(({ msg, items }) => el('li', { class: 'warn' }, '⚠ ' + msg,
+      items && items.length ? el('details', {}, el('summary', {}, 'afficher'), el('div', {}, items.join(' · '))) : ''))
+      : [el('li', { class: 'ok' }, '✔ Tous les contrôles de cohérence sont valides.')]));
+  }
+
+  const cmp = (key, dir) => (a, b) => {
+    const x = a[key] ?? '', y = b[key] ?? '';
+    return (x > y ? 1 : x < y ? -1 : 0) * dir;
+  };
+
+  function pbar(v) {
+    v = v ?? 0;
+    return el('div', { class: 'pbar' }, el('div', { class: 't' }, el('div', { class: 'f', style: `width:${Math.min(100, v)}%;background:${pctColor(v)}` })), el('span', {}, fmtPct(v)));
+  }
+  const io = (r, e) => el('td', { class: 'n io', title: `${fmt(r['in_' + e])} → ${fmt(r['out_' + e])}` },
+    fmt(r['in_' + e]), ' → ', el('b', {}, fmt(r['out_' + e])));
+
+  function renderTable() {
+    const q = $('search').value.trim().toLowerCase();
+    const status = $('statusFilter').value, reason = $('reasonFilter').value;
+    let list = rows.filter(r => (!q || r.network_name.toLowerCase().includes(q))
+      && (!status || (status === 'eliminated') === !!r.eliminated)
+      && (!reason || r.elimination_reason === reason));
+    if (activeBin) list = list.filter(r => !r.eliminated && inBin(r[activeBin.metric] ?? 0, BINS[activeBin.idx]));
+    list.sort(cmp(sort.key, sort.dir));
+
+    $('binTag').replaceChildren(activeBin ? el('span', { class: 'tag', title: 'Cliquer pour retirer le filtre', onclick: () => { activeBin = null; renderHist(); renderTable(); } },
+      `${entityLabel(activeBin.metric)} éliminés : ${BINS[activeBin.idx][2]} % ✕`) : '');
+    $('count').textContent = `${fmt(list.length)} / ${fmt(rows.length)} réseaux`;
+    $('metricsTable').querySelector('tbody').replaceChildren(...list.map(r => {
+      const d = daysUntil(r.graph_expiration_date);
+      return el('tr', { class: r.eliminated ? 'elim' : '' },
+        el('td', { class: 'name' }, r.network_name),
+        el('td', {}, r.eliminated
+          ? el('span', { class: 'chip', style: 'background:var(--bad)', title: r.elimination_reason || '' }, humanize(r.elimination_reason) || 'éliminé')
+          : el('span', { class: 'chip', style: 'background:var(--ok)' }, 'conservé')),
+        ...ENTITIES.map(e => io(r, e)),
+        el('td', {}, pbar(r.stops_eliminated_pct)),
+        el('td', {}, pbar(r.trips_eliminated_pct)),
+        el('td', {}, pbar(r.stop_times_eliminated_pct)),
+        el('td', {}, pbar(r.shapes_eliminated_pct)),
+        el('td', { class: 'n', style: d !== null && d <= 30 ? 'color:var(--bad);font-weight:600' : '' }, frDate(r.graph_expiration_date)));
+    }));
+    markSorted('metricsTable', sort);
+  }
+
+  function renderElimTable() {
+    const q = $('elimSearch').value.trim().toLowerCase();
+    const stage = $('stageFilter').value, reason = $('elimReasonFilter').value;
+    const list = elimRows.filter(e => (!q || e.network_name.toLowerCase().includes(q)) && (!stage || e.stage === stage) && (!reason || e.reason === reason))
+      .sort(cmp(elimSort.key, elimSort.dir));
+    $('elimCount').textContent = `${fmt(list.length)} / ${fmt(elimRows.length)} lignes`;
+    $('elimTable').querySelector('tbody').replaceChildren(...list.map(e => el('tr', {},
+      el('td', { class: 'name' }, e.network_name),
+      el('td', {}, el('span', { class: 'chip', style: `background:${stageColor(e.stage)}`, title: e.reason }, humanize(e.reason))),
+      el('td', {}, e.stage))));
+    markSorted('elimTable', elimSort);
+  }
+
+  function markSorted(tableId, s) {
+    document.querySelectorAll(`#${tableId} th`).forEach(th => {
+      th.classList.toggle('sorted', th.dataset.key === s.key);
+      th.dataset.dir = s.dir > 0 ? '▲' : '▼';
+    });
+  }
+
+  function bindSort(tableId, s, fn) {
+    document.querySelectorAll(`#${tableId} th`).forEach(th => th.addEventListener('click', () => {
+      s.dir = s.key === th.dataset.key ? -s.dir : 1; s.key = th.dataset.key; fn();
+    }));
+  }
+  bindSort('metricsTable', sort, renderTable);
+  bindSort('elimTable', elimSort, renderElimTable);
+
+  $('search').addEventListener('input', renderTable);
+  $('statusFilter').addEventListener('change', renderTable);
+  $('reasonFilter').addEventListener('change', renderTable);
+  $('histMetric').addEventListener('change', () => { activeBin = null; renderHist(); renderTable(); });
+  $('elimSearch').addEventListener('input', renderElimTable);
+  $('stageFilter').addEventListener('change', renderElimTable);
+  $('elimReasonFilter').addEventListener('change', () => { activeReason = $('elimReasonFilter').value; renderReasons(); renderElimTable(); });
+
+  const readFile = f => f && f.text().then(load);
+  $('file').addEventListener('change', e => readFile(e.target.files[0]));
+  ['dragover', 'dragenter'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); $('drop').classList.add('over'); }));
+  document.addEventListener('dragleave', () => $('drop').classList.remove('over'));
+  document.addEventListener('drop', e => { e.preventDefault(); $('drop').classList.remove('over'); readFile(e.dataTransfer.files[0]); });
+})();
+</script>
+</body>
+</html>

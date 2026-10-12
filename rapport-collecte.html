@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visualiseur du rapport de collecte GTFS</title>
+<style>
+  :root {
+    --bg: #f4f6fa; --card: #fff; --text: #1d2433; --muted: #6b7489; --border: #e1e5ee;
+    --accent: #2f6fed; --ok: #1f9d55; --warn: #e3a008; --bad: #d64545;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 16px 24px; background: #1d2433; color: #fff; }
+  header h1 { font-size: 18px; margin: 0; flex: 1; }
+  header .meta { color: #b9c2d6; font-size: 13px; }
+  .file-btn { background: var(--accent); color: #fff; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+  .file-btn input { display: none; }
+  main { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
+  #drop { margin: 40px auto; max-width: 640px; padding: 60px 20px; border: 2px dashed #aab4c8; border-radius: 12px; text-align: center; color: var(--muted); background: var(--card); }
+  #drop.over { border-color: var(--accent); color: var(--accent); }
+  #error { color: var(--bad); text-align: center; font-weight: 600; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .kpi { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .kpi .v { font-size: 26px; font-weight: 700; }
+  .kpi .l { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .kpi .s { color: var(--muted); font-size: 12px; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 16px; margin-bottom: 16px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .card h2 { font-size: 15px; margin: 0 0 12px; }
+  .bar-row { display: grid; grid-template-columns: 260px 1fr 100px; align-items: center; gap: 10px; padding: 3px 4px; border-radius: 6px; }
+  .bar-row.clickable { cursor: pointer; }
+  .bar-row.clickable:hover, .bar-row.active { background: #eef3ff; }
+  .bar-row .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  .bar-track { background: #edf0f6; border-radius: 4px; height: 18px; overflow: hidden; }
+  .bar { height: 100%; border-radius: 4px; transition: width .4s; }
+  .bar-row .num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .warnings li { margin: 4px 0; }
+  .warnings li.ok { color: var(--ok); }
+  .warnings li.warn { color: #9a6700; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px; }
+  .toolbar input, .toolbar select { padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; font: inherit; }
+  .toolbar input { min-width: 280px; }
+  .toolbar .count { color: var(--muted); margin-left: auto; }
+  .table-wrap { max-height: 560px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 7px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+  th { position: sticky; top: 0; background: #f8f9fc; cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sorted::after { content: attr(data-dir); margin-left: 4px; color: var(--accent); }
+  td.name { word-break: break-all; }
+  tr.dup td { background: #fff7e0; }
+  .chip { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; color: #fff; white-space: nowrap; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); margin-top: 10px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <a href="index.html" style="color:#b9c2d6;text-decoration:none" title="Accueil">← Accueil</a>
+  <h1>Rapport de collecte GTFS <span style="font-weight:400;color:#b9c2d6">(get_all_gtfs)</span></h1>
+  <span class="meta" id="meta"></span>
+  <label class="file-btn">Charger un JSON<input type="file" id="file" accept=".json,application/json"></label>
+</header>
+
+<div id="drop">Déposez un fichier <b>get_all_gtfs_report.json</b> ici, ou utilisez « Charger un JSON ».<p id="error"></p></div>
+
+<main id="app" hidden>
+  <section class="kpis" id="kpis"></section>
+
+  <section class="grid2">
+    <div class="card">
+      <h2>Entonnoir de sélection</h2>
+      <div id="funnel"></div>
+    </div>
+    <div class="card">
+      <h2>Motifs d'élimination <small style="color:var(--muted);font-weight:400">(cliquer pour filtrer le tableau)</small></h2>
+      <div id="reasons"></div>
+      <div class="legend" id="family-legend"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Contrôles de cohérence</h2>
+    <ul class="warnings" id="warnings"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Réseaux éliminés</h2>
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="Rechercher un réseau…">
+      <select id="reasonFilter"></select>
+      <select id="stageFilter"></select>
+      <span class="count" id="count"></span>
+    </div>
+    <div class="table-wrap">
+      <table id="table">
+        <thead><tr>
+          <th data-key="idx">#</th>
+          <th data-key="network_name">Réseau</th>
+          <th data-key="reason">Motif</th>
+          <th data-key="stage">Étape</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const fmt = n => (n ?? 0).toLocaleString('fr-FR');
+  const pct = (a, b) => b ? (100 * a / b).toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' %' : '–';
+  const $ = id => document.getElementById(id);
+
+  const FAMILIES = [
+    { name: 'Offre redondante', test: r => r.startsWith('dataset_offer_covered'), color: '#6b8afd' },
+    { name: 'Expiré', test: r => r.includes('expired'), color: '#e3a008' },
+    { name: 'Problème de métadonnées', test: r => r.startsWith('metadata_issue'), color: '#d64545' },
+    { name: 'Erreur de téléchargement / fichier', test: r => r.startsWith('http_') || r.includes('zip') || r.startsWith('download'), color: '#9b2c2c' },
+    { name: 'Éditeur non supporté', test: r => r.startsWith('community_resource'), color: '#8e6bd6' },
+    { name: 'Hors périmètre', test: () => true, color: '#3aa4a0' },
+  ];
+  const familyOf = r => FAMILIES.find(f => f.test(r || ''));
+  const REASONS = {
+    dataset_offer_covered_by_region_aggregate: "Offre couverte par l'agrégat régional",
+    resource_expired_end_date: 'Ressource expirée (date de fin dépassée)',
+    community_resource_publisher_not_supported: 'Ressource communautaire : éditeur non supporté',
+    dataset_sub_type_school_only: 'Jeu de données uniquement scolaire',
+    metadata_issue_no_calendar: 'Métadonnées : pas de calendrier',
+    metadata_issue_invalid_shape_id: 'Métadonnées : shape_id invalide',
+    metadata_issue_invalid_coordinates: 'Métadonnées : coordonnées invalides',
+    metadata_issue_missing_mandatory_file: 'Métadonnées : fichier obligatoire manquant',
+    invalid_zip_file: 'Fichier ZIP invalide',
+  };
+  const humanize = s => {
+    if (!s) return '';
+    if (REASONS[s]) return REASONS[s];
+    const http = s.match(/^http_status_(\d+)$/);
+    if (http) return `Statut HTTP ${http[1]}`;
+    return s.replace(/_/g, ' ');
+  };
+
+  let data = null, rows = [], sortKey = 'idx', sortDir = 1, activeReason = '';
+
+  function el(tag, attrs = {}, ...children) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === 'style') e.style.cssText = v;
+      else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+      else e.setAttribute(k, v);
+    }
+    for (const c of children) e.append(c instanceof Node ? c : document.createTextNode(c ?? ''));
+    return e;
+  }
+
+  function barRow(label, value, max, color, opts = {}) {
+    const row = el('div', { class: 'bar-row' + (opts.onclick ? ' clickable' : ''), title: opts.title || label });
+    if (opts.onclick) row.addEventListener('click', opts.onclick);
+    if (opts.active) row.classList.add('active');
+    row.append(
+      el('span', { class: 'lbl' }, label),
+      el('div', { class: 'bar-track' }, el('div', { class: 'bar', style: `width:${max ? 100 * value / max : 0}%;background:${color}` })),
+      el('span', { class: 'num' }, opts.text ?? fmt(value)),
+    );
+    return row;
+  }
+
+  // Accept proper JSON, a JSON string containing JSON, or a JSON string wrapping a Python dict repr.
+  function parseReport(text) {
+    let v;
+    try { v = JSON.parse(text); } catch {
+      const t = text.trim().replace(/,\s*$/, '');
+      v = JSON.parse(t.startsWith('"') ? t : '"' + t);
+    }
+    if (typeof v === 'string') {
+      try { v = JSON.parse(v); } catch { v = JSON.parse(pyReprToJson(v)); }
+    }
+    return v;
+  }
+
+  function pyReprToJson(s) {
+    let out = '', i = 0;
+    while (i < s.length) {
+      const c = s[i];
+      if (c === "'" || c === '"') {
+        let j = i + 1, str = '';
+        while (j < s.length && s[j] !== c) {
+          if (s[j] === '\\') {
+            const n = s[j + 1];
+            if (n === 'x') { str += '\\u00' + s.substr(j + 2, 2); j += 4; }
+            else { str += n === "'" ? "'" : '\\' + n; j += 2; }
+          } else { str += s[j] === '"' ? '\\"' : s[j]; j++; }
+        }
+        out += '"' + str + '"';
+        i = j + 1;
+      } else if (s.startsWith('None', i)) { out += 'null'; i += 4; }
+      else if (s.startsWith('True', i)) { out += 'true'; i += 4; }
+      else if (s.startsWith('False', i)) { out += 'false'; i += 5; }
+      else { out += c; i++; }
+    }
+    return out;
+  }
+
+  function load(text) {
+    try {
+      data = parseReport(text);
+      if (!Array.isArray(data.eliminated_networks) || data.datasets_total === undefined)
+        throw new Error("ce fichier ne ressemble pas à un rapport get_all_gtfs (datasets_total / eliminated_networks manquants).");
+      $('error').textContent = '';
+      render();
+    } catch (e) {
+      $('app').hidden = true; $('drop').hidden = false;
+      $('error').textContent = 'Impossible de charger le rapport : ' + e.message;
+    }
+  }
+
+  function render() {
+    $('drop').hidden = true; $('app').hidden = false;
+    $('meta').textContent = `Généré le ${data.generated_at ? new Date(data.generated_at).toLocaleString('fr-FR') : '?'}`;
+    const elim = data.eliminated_networks;
+    const nameCount = {};
+    elim.forEach(e => nameCount[e.network_name] = (nameCount[e.network_name] || 0) + 1);
+    rows = elim.map((e, i) => ({ ...e, idx: i + 1, dup: nameCount[e.network_name] > 1 }));
+
+    // KPIs
+    const k = $('kpis'); k.replaceChildren();
+    const kpi = (l, v, s, color) => k.append(el('div', { class: 'kpi' },
+      el('div', { class: 'l' }, l), el('div', { class: 'v', style: color ? `color:${color}` : '' }, v), el('div', { class: 's' }, s || '')));
+    kpi('Jeux de données du portail', fmt(data.datasets_total));
+    kpi('Jeux transport en commun', fmt(data.public_transit_datasets_total), pct(data.public_transit_datasets_total, data.datasets_total) + ' du total');
+    kpi('Ressources sélectionnées', fmt(data.selected_resources_count), pct(data.selected_resources_count, data.public_transit_datasets_total) + ' des jeux TC');
+    kpi('Téléchargements réussis', fmt(data.download_success_count), pct(data.download_success_count, data.download_attempted_count) + ' de réussite', 'var(--ok)');
+    kpi('Téléchargements échoués', fmt(data.download_failed_count), `sur ${fmt(data.download_attempted_count)} tentés`, data.download_failed_count ? 'var(--bad)' : 'var(--ok)');
+    kpi('Entrées éliminées', fmt(elim.length), `${fmt(Object.keys(nameCount).length)} noms uniques`, 'var(--warn)');
+
+    // Funnel
+    const steps = [
+      ['Jeux de données du portail', data.datasets_total, '#94a3c4'],
+      ['Jeux transport en commun', data.public_transit_datasets_total, '#6b8afd'],
+      ['Ressources sélectionnées', data.selected_resources_count, '#2f6fed'],
+      ['Téléchargements tentés', data.download_attempted_count, '#3aa4a0'],
+      ['Téléchargements réussis', data.download_success_count, '#1f9d55'],
+    ];
+    const fmax = Math.max(...steps.map(s => s[1] || 0));
+    $('funnel').replaceChildren(...steps.map(([l, v, c]) => barRow(l, v || 0, fmax, c)));
+
+    renderReasons();
+
+    // Consistency checks
+    const w = [];
+    const dups = Object.entries(nameCount).filter(([, c]) => c > 1);
+    if (dups.length) w.push(['warn', `${dups.length} nom(s) de réseau en double dans eliminated_networks : ${dups.map(d => `${d[0]} (×${d[1]})`).join(', ')}`]);
+    if (data.download_attempted_count !== data.selected_resources_count)
+      w.push(['warn', `download_attempted_count (${data.download_attempted_count}) ≠ selected_resources_count (${data.selected_resources_count})`]);
+    if ((data.download_success_count ?? 0) + (data.download_failed_count ?? 0) !== data.download_attempted_count)
+      w.push(['warn', 'download_success_count + download_failed_count ≠ download_attempted_count']);
+    const dlErrors = elim.filter(e => familyOf(e.reason).name === 'Erreur de téléchargement / fichier').length;
+    if (dlErrors !== data.download_failed_count)
+      w.push(['warn', `download_failed_count (${data.download_failed_count}) ≠ nombre d'erreurs de téléchargement / fichier dans eliminated_networks (${dlErrors})`]);
+    const missingFields = elim.filter(e => !e.network_name || !e.reason || !e.stage).length;
+    if (missingFields) w.push(['warn', `${missingFields} entrée(s) éliminée(s) sans network_name / reason / stage`]);
+    if (!w.length) w.push(['ok', 'Tous les contrôles de cohérence sont valides.']);
+    $('warnings').replaceChildren(...w.map(([c, t]) => el('li', { class: c }, (c === 'ok' ? '✔ ' : '⚠ ') + t)));
+
+    // Filters
+    const reasons = [...new Set(elim.map(e => e.reason))].sort();
+    $('reasonFilter').replaceChildren(el('option', { value: '' }, 'Tous les motifs'), ...reasons.map(r => el('option', { value: r }, humanize(r))));
+    const stages = [...new Set(elim.map(e => e.stage))].sort();
+    $('stageFilter').replaceChildren(el('option', { value: '' }, 'Toutes les étapes'), ...stages.map(s => el('option', { value: s }, s)));
+    activeReason = '';
+    renderTable();
+  }
+
+  function renderReasons() {
+    const counts = {};
+    data.eliminated_networks.forEach(e => counts[e.reason] = (counts[e.reason] || 0) + 1);
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    const max = entries.length ? entries[0][1] : 0;
+    const total = data.eliminated_networks.length;
+    $('reasons').replaceChildren(...entries.map(([r, c]) => barRow(humanize(r), c, max, familyOf(r).color, {
+      text: `${c} · ${pct(c, total)}`, title: r, active: r === activeReason,
+      onclick: () => { activeReason = activeReason === r ? '' : r; $('reasonFilter').value = activeReason; renderReasons(); renderTable(); },
+    })));
+    const used = new Set(entries.map(([r]) => familyOf(r).name));
+    $('family-legend').replaceChildren(...FAMILIES.filter(f => used.has(f.name)).map(f => el('span', {}, el('i', { style: `background:${f.color}` }), f.name)));
+  }
+
+  function renderTable() {
+    const q = $('search').value.trim().toLowerCase();
+    const reason = $('reasonFilter').value, stage = $('stageFilter').value;
+    const filtered = rows.filter(r => (!q || r.network_name.toLowerCase().includes(q)) && (!reason || r.reason === reason) && (!stage || r.stage === stage))
+      .sort((a, b) => (a[sortKey] > b[sortKey] ? 1 : a[sortKey] < b[sortKey] ? -1 : 0) * sortDir);
+    $('count').textContent = `${fmt(filtered.length)} / ${fmt(rows.length)} lignes`;
+    $('table').querySelector('tbody').replaceChildren(...filtered.map(r => el('tr', { class: r.dup ? 'dup' : '', title: r.dup ? 'Entrée en double' : '' },
+      el('td', {}, String(r.idx)),
+      el('td', { class: 'name' }, r.network_name),
+      el('td', {}, el('span', { class: 'chip', style: `background:${familyOf(r.reason).color}`, title: r.reason }, humanize(r.reason))),
+      el('td', {}, r.stage),
+    )));
+    document.querySelectorAll('#table th').forEach(th => {
+      th.classList.toggle('sorted', th.dataset.key === sortKey);
+      th.dataset.dir = sortDir > 0 ? '▲' : '▼';
+    });
+  }
+
+  document.querySelectorAll('#table th').forEach(th => th.addEventListener('click', () => {
+    sortDir = sortKey === th.dataset.key ? -sortDir : 1; sortKey = th.dataset.key; renderTable();
+  }));
+  $('search').addEventListener('input', renderTable);
+  $('stageFilter').addEventListener('change', renderTable);
+  $('reasonFilter').addEventListener('change', () => { activeReason = $('reasonFilter').value; renderReasons(); renderTable(); });
+
+  const readFile = f => f && f.text().then(load);
+  $('file').addEventListener('change', e => readFile(e.target.files[0]));
+  ['dragover', 'dragenter'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); $('drop').classList.add('over'); }));
+  document.addEventListener('dragleave', () => $('drop').classList.remove('over'));
+  document.addEventListener('drop', e => { e.preventDefault(); $('drop').classList.remove('over'); readFile(e.dataTransfer.files[0]); });
+})();
+</script>
+</body>
+</html>
